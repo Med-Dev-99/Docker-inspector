@@ -5,6 +5,7 @@
 
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,8 @@ import { StringDecoder } from 'node:string_decoder';
 import { WebSocketServer } from 'ws';
 import * as docker from './docker.js';
 import { Hub, hostInfo } from './hub.js';
+import { openStore } from './store.js';
+import { runDoctor, invalidateDoctor } from './doctor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(__dirname, '../dist');
@@ -30,6 +33,17 @@ function readReqBody(req) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+async function readJSON(req) {
+  const buf = await readReqBody(req);
+  if (!buf.length) return {};
+  try { return JSON.parse(buf.toString('utf8')); } catch { const e = new Error('Invalid JSON body'); e.status = 400; throw e; }
+}
+
+/** Where history is stored when no dataDir is given: $DI_DATA_DIR or ~/.local/share/docker-inspector. */
+export function defaultDataDir() {
+  return process.env.DI_DATA_DIR || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share'), 'docker-inspector');
 }
 
 function sendJSON(res, status, obj) {
@@ -84,12 +98,16 @@ done`;
  * @param {string}   opts.devOrigin   extra allowed origin for the Vite dev server
  * @param {string[]} opts.extraHosts  additional `host:port` values browsers may use to reach us
  *                                    (needed behind Docker port mappings / reverse proxies)
+ * @param {string}   opts.dataDir     where the history database lives (default: defaultDataDir())
  */
-export async function startServer({ port = 0, host = '127.0.0.1', token = crypto.randomBytes(24).toString('hex'), devOrigin, extraHosts = [] } = {}) {
+export async function startServer({ port = 0, host = '127.0.0.1', token = crypto.randomBytes(24).toString('hex'), devOrigin, extraHosts = [], dataDir = defaultDataDir() } = {}) {
   const version = await docker.init();
   const info = await docker.get('/info').catch(() => ({}));
-  const hub = new Hub();
+  const store = await openStore(dataDir);
+  const hub = new Hub({ store });
   await hub.start();
+  // Container/image changes make the cached Doctor report stale.
+  hub.on('event', (e) => { if (e.type === 'container' || e.type === 'image') invalidateDoctor(); });
 
   let actualPort = port;
   const allowedHosts = () => new Set([`127.0.0.1:${actualPort}`, `localhost:${actualPort}`, ...extraHosts, ...(devOrigin ? [new URL(devOrigin).host] : [])]);
@@ -123,6 +141,7 @@ export async function startServer({ port = 0, host = '127.0.0.1', token = crypto
         socket: docker.SOCKET_PATH,
         apiVersion: docker.getApiPrefix().slice(2),
         engine: version,
+        features: { history: !!store, dataDir: store ? path.dirname(store.file) : null },
       });
     }
     if (p === '/api/host') {
@@ -135,7 +154,58 @@ export async function startServer({ port = 0, host = '127.0.0.1', token = crypto
       return sendJSON(res, 200, h);
     }
     if (p === '/api/stats/history') return sendJSON(res, 200, hub.history());
-    if (p === '/api/events/recent') return sendJSON(res, 200, hub.events.slice(-500));
+    if (p === '/api/events/recent') return sendJSON(res, 200, hub.events.slice(-1000));
+
+    // ---------------------------------------------------------------- time machine
+    if (p.startsWith('/api/history/') || p.startsWith('/api/crashes') || p.startsWith('/api/doctor/ignore')) {
+      if (!store) return sendJSON(res, 503, { message: 'History is disabled: the local database could not be opened.' });
+    }
+    const num = (k, d) => { const v = Number(url.searchParams.get(k)); return Number.isFinite(v) && v > 0 ? v : d; };
+    const now = Date.now();
+    const range = () => {
+      const to = Math.min(num('to', now), now);
+      const from = Math.max(num('from', to - 3600_000), to - 31 * 86400_000);
+      return { from, to };
+    };
+    let hm;
+    if (p === '/api/history/info') return sendJSON(res, 200, { ...store.coverage(), dataDir: path.dirname(store.file) });
+    if (p === '/api/history/host') { const { from, to } = range(); return sendJSON(res, 200, { from, to, ...store.hostSeries(from, to, num('points', 720)) }); }
+    if ((hm = p.match(/^\/api\/history\/container\/([\w.-]+)$/))) {
+      const { from, to } = range();
+      return sendJSON(res, 200, {
+        from, to, ...store.containerSeries(hm[1], from, to, num('points', 720)),
+        events: store.events({ from, to, actor: hm[1], limit: 300 }),
+      });
+    }
+    if (p === '/api/history/summary') { const { from, to } = range(); return sendJSON(res, 200, { from, to, containers: store.summary(from, to) }); }
+    if (p === '/api/history/snapshot') {
+      const t = Math.min(num('t', now), now);
+      return sendJSON(res, 200, { ...store.snapshot(t), events: store.events({ from: t - 5 * 60_000, to: t + 5 * 60_000, limit: 100 }) });
+    }
+    if (p === '/api/history/events') {
+      const { from, to } = range();
+      return sendJSON(res, 200, store.events({ from, to, actor: url.searchParams.get('actor') || undefined, limit: num('limit', 2000) }));
+    }
+
+    // ---------------------------------------------------------------- crash reports
+    if (p === '/api/crashes' && req.method === 'GET') return sendJSON(res, 200, { unread: store.unackedCount(), crashes: store.listCrashes({ limit: num('limit', 300) }) });
+    if (p === '/api/crashes/ack-all' && req.method === 'POST') { store.ackAll(); return sendJSON(res, 200, { ok: true }); }
+    if ((hm = p.match(/^\/api\/crashes\/(\d+)(\/ack)?$/))) {
+      const id = Number(hm[1]);
+      if (hm[2] && req.method === 'POST') { store.ackCrash(id); return sendJSON(res, 200, { ok: true }); }
+      if (req.method === 'DELETE') { store.deleteCrash(id); return sendJSON(res, 200, { ok: true }); }
+      const c = store.getCrash(id);
+      if (!c) return sendJSON(res, 404, { message: 'Crash report not found' });
+      const exists = await docker.get(`/containers/${c.cid}/json`).then((x) => ({ id: x.Id, state: x.State?.Status })).catch(() => null);
+      return sendJSON(res, 200, { ...c, container: exists, previous: store.crashesFor(c.name, Date.now() - 30 * 86400_000).filter((x) => x.id !== c.id).slice(0, 20) });
+    }
+
+    // ---------------------------------------------------------------- doctor
+    if (p === '/api/doctor') return sendJSON(res, 200, await runDoctor({ info, store, hub, fresh: url.searchParams.get('fresh') === '1' }));
+    if (p === '/api/doctor/ignore') {
+      if (req.method === 'POST') { const { key } = await readJSON(req); if (!key) return sendJSON(res, 400, { message: 'key required' }); store.addIgnore(String(key)); return sendJSON(res, 200, { ok: true }); }
+      if (req.method === 'DELETE') { store.removeIgnore(url.searchParams.get('key') || ''); return sendJSON(res, 200, { ok: true }); }
+    }
 
     let m;
     if ((m = p.match(/^\/api\/files\/([\w.-]+)\/list$/))) {
@@ -213,8 +283,10 @@ export async function startServer({ port = 0, host = '127.0.0.1', token = crypto
 
     const onStats = (snap) => topics.has('stats') && send({ type: 'stats', ...snap });
     const onEvent = (ev) => topics.has('events') && send({ type: 'event', event: ev });
+    const onCrash = (crash) => topics.has('crashes') && send({ type: 'crash', crash });
     hub.on('stats', onStats);
     hub.on('event', onEvent);
+    hub.on('crash', onCrash);
 
     ws.on('message', async (raw) => {
       let msg;
@@ -291,6 +363,7 @@ export async function startServer({ port = 0, host = '127.0.0.1', token = crypto
     ws.on('close', () => {
       hub.off('stats', onStats);
       hub.off('event', onEvent);
+      hub.off('crash', onCrash);
       for (const s of sessions.values()) s.close();
       sessions.clear();
     });
@@ -303,6 +376,8 @@ export async function startServer({ port = 0, host = '127.0.0.1', token = crypto
     port: actualPort,
     token,
     url: `http://127.0.0.1:${actualPort}/`,
-    close() { hub.stop(); wss.close(); server.close(); },
+    hub,
+    store,
+    close() { hub.stop(); store?.close(); wss.close(); server.close(); },
   };
 }
