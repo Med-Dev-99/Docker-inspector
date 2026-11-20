@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box, ChevronRight, Copy, Ellipsis, ExternalLink, FileText, FolderOpen, Layers, Pause, Pencil, Play, Plus, RotateCw,
-  Square, SquareTerminal, Trash2, Zap, Info, Activity, ScrollText, Cpu, Settings, Braces, ListTree, Boxes,
+  Square, SquareTerminal, Trash2, Zap, Info, Activity, ScrollText, Cpu, Settings, Braces, ListTree, Boxes, AlertOctagon, ArrowRight,
 } from 'lucide-react';
 import { Page, Split } from '../components/layout';
 import { Button, Capsule, Empty, IconButton, Loading, Pill, SearchField, Segmented, Spinner, StatusDot, useLocalState, copyText } from '../components/ui';
@@ -21,6 +21,7 @@ import { ConfigTab } from './container/Config';
 import { InspectTab } from './container/Inspect';
 import { RenameSheet } from './sheets/Rename';
 import { RunContainerSheet } from './sheets/RunContainer';
+import { useCrashes } from '../lib/history';
 
 type Filter = 'all' | 'running' | 'stopped';
 
@@ -242,6 +243,7 @@ function ContainerDetail({ id, tab, qs }: { id: string; tab: string; qs: string 
   const { data: c, isLoading, error } = useContainer(id);
   const busy = useBusy(c?.Id);
   const [renameOpen, setRenameOpen] = useState(false);
+  const { data: crashData } = useCrashes();
   if (isLoading) return <Loading />;
   if (error || !c) return <Empty icon={Box} title="Container not found" message="It may have been removed." action={<Button onClick={() => navigate('/containers')}>Back to Containers</Button>} />;
 
@@ -256,6 +258,7 @@ function ContainerDetail({ id, tab, qs }: { id: string; tab: string; qs: string 
     return (v || []).map((b: any) => ({ PrivatePort: Number(port), PublicPort: Number(b.HostPort), Type: proto, IP: b.HostIp }));
   }));
   const go = (t: string) => navigate(`/containers/${id}/${t}${qs}`);
+  const lastCrash = (crashData?.crashes || []).find((x) => x.name === name && Date.now() - x.lastT < 3 * 86400_000);
   const since = running ? `Up ${ago(c.State.StartedAt).replace(' ago', '')}` : state === 'exited' ? `Exited ${ago(c.State.FinishedAt)} · code ${c.State.ExitCode}` : stateLabel(state);
 
   return (
@@ -291,6 +294,13 @@ function ContainerDetail({ id, tab, qs }: { id: string; tab: string; qs: string 
           )}
         </div>
       </div>
+      {lastCrash && (
+        <div className={`crash-banner${running ? ' recovered' : ''}`} onClick={() => navigate(`/crashes/${lastCrash.id}`)}>
+          <AlertOctagon size={15} />
+          <span><b>{running ? 'Crashed and restarted' : 'Crashed'} {ago(lastCrash.lastT)}</b>{lastCrash.occurrences > 1 ? ` (${lastCrash.occurrences} times)` : ''}: {lastCrash.title}.</span>
+          <span className="flex-1" /><span className="crash-banner-link">See why <ArrowRight size={12} /></span>
+        </div>
+      )}
       {ports.some((p) => p.PublicPort) && (
         <div className="detail-ports">
           {ports.filter((p) => p.PublicPort).map((p) => (
