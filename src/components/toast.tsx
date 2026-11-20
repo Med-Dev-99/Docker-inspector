@@ -2,7 +2,7 @@
 import { useSyncExternalStore } from 'react';
 import { CircleCheck, CircleX, Info, TriangleAlert, X } from 'lucide-react';
 
-export interface Toast { id: number; kind: 'success' | 'error' | 'info' | 'warning'; title: string; message?: string; leaving?: boolean }
+export interface Toast { id: number; kind: 'success' | 'error' | 'info' | 'warning'; title: string; message?: string; leaving?: boolean; action?: { label: string; onClick: () => void }; duration?: number }
 
 let items: Toast[] = [];
 let nextId = 1;
@@ -14,7 +14,7 @@ export function toast(t: Omit<Toast, 'id'>) {
   items.push({ ...t, id });
   if (items.length > 4) items.shift();
   emit();
-  setTimeout(() => dismiss(id), t.kind === 'error' ? 7000 : 4200);
+  setTimeout(() => dismiss(id), t.duration ?? (t.action ? 12000 : t.kind === 'error' ? 7000 : 4200));
   return id;
 }
 
@@ -42,6 +42,7 @@ export function Toaster() {
             <div className="toast-body">
               <div className="toast-title">{t.title}</div>
               {t.message && <div className="toast-msg">{t.message}</div>}
+              {t.action && <button className="toast-action" onClick={() => { t.action!.onClick(); dismiss(t.id); }}>{t.action.label}</button>}
             </div>
             <button className="toast-close" onClick={() => dismiss(t.id)} aria-label="Dismiss"><X size={12} strokeWidth={2.5} /></button>
           </div>
