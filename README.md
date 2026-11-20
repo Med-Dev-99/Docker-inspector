@@ -21,6 +21,7 @@
 ## Table of contents
 
 - [Quick start](#quick-start)
+- [Run with Docker](#run-with-docker)
 - [Tour](#tour)
 - [Usage](#usage)
 - [Connecting to a different engine](#connecting-to-a-different-engine)
@@ -56,6 +57,71 @@ user in the `docker` group.
 
 > **Heads-up for VS Code users:** VS Code's integrated terminal sets `ELECTRON_RUN_AS_NODE=1`, which makes
 > a bare `electron .` run as plain Node. The npm scripts and the desktop launcher already clear it.
+
+## Run with Docker
+
+Prefer not to install Node.js? Run Docker Inspector itself as a container and open it in your browser.
+The desktop shell (Electron) is not part of the image; the container runs the same backend and UI in web mode.
+
+```bash
+cp .env.example .env              # then edit it (see below)
+docker compose up -d --build
+```
+
+Open **http://localhost:7780/?t=&lt;your DI_TOKEN&gt;** — the token is the one from `.env`. If you leave `DI_TOKEN`
+empty, a random token is generated and printed by `docker compose logs`.
+
+What to put in `.env`:
+
+| Variable | Meaning |
+| --- | --- |
+| `DOCKER_GID` | Group that owns the Docker socket **inside the container** (see below). |
+| `DI_TOKEN` | Access token, at least 16 characters: `openssl rand -hex 24`. Empty = random on every start. |
+| `DI_PORT` | Host port published on `127.0.0.1` (default `7780`). |
+| `DI_ALLOWED_HOSTS` | `host:port` values your browser uses to reach the app (default `localhost:<DI_PORT>`). Only needed behind a reverse proxy or another hostname. |
+
+**Which `DOCKER_GID`?** The container runs as an unprivileged user and must be in the group that owns the socket:
+
+- **Native Docker Engine** — the socket belongs to your `docker` group: `getent group docker | cut -d: -f3`.
+- **Docker Desktop for Linux** — the socket appears as `root:root` in containers, so use `0`.
+- Not sure? Start the container; if the value is wrong the log tells you exactly which one to use
+  (`docker compose logs`).
+
+Plain `docker run` works too:
+
+```bash
+docker build -t docker-inspector .
+docker run -d --name docker-inspector --restart unless-stopped \
+  -p 127.0.0.1:7780:7780 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --group-add "$(getent group docker | cut -d: -f3)" \
+  -e DI_TOKEN="$(openssl rand -hex 24)" \
+  -e DI_ALLOWED_HOSTS=localhost:7780 \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+  docker-inspector
+docker logs docker-inspector     # prints the URL including the token
+```
+
+About the container image:
+
+- Multi-stage build on `node:22-alpine` (about 240 MB): the UI is built in one stage, only the production
+  dependency (`ws`) and the compiled UI are copied into the runtime stage. The Electron binary is never downloaded.
+- Runs as the unprivileged `node` user, with a read-only filesystem, all Linux capabilities dropped, `no-new-privileges`,
+  and a built-in health check (`docker ps` shows `healthy`).
+- The port is published on **loopback only** (`127.0.0.1`). Inside the container the server listens on `0.0.0.0`,
+  which is why every request is protected by the token and by Host/Origin checks.
+
+> **Security:** mounting the Docker socket gives the container (and anyone with the token) root-equivalent control
+> of the machine running the engine. `:ro` on the socket does **not** make the Docker API read-only. Keep the
+> published port on `127.0.0.1`, keep the token secret, and put proper authentication and TLS in front of it
+> before you ever expose it to a network.
+
+Differences from the desktop app:
+
+- It talks to whichever engine serves the mounted socket. On Docker Desktop that is Docker Desktop's own engine,
+  which can be a different one from a native `dockerd` running on the host.
+- There is no native window, tray or desktop notification: use the browser tab. (Crash alerts still appear as in-app toasts.)
+- Host CPU, memory, uptime and disk figures describe the machine that runs the engine (the Docker Desktop VM, if you use it).
 
 ## Tour
 
@@ -191,6 +257,8 @@ server/hub.js        Stats streams for running containers, event stream, host me
 server/server.js     127.0.0.1 HTTP + WebSocket: engine proxy, logs, exec, files
 src/                 React UI (Vite): views/, components/, lib/
 scripts/             Dev runner, desktop-launcher installer, icon renderer
+Dockerfile           Multi-stage image that runs the backend + UI in web mode
+docker-compose.yml   Hardened, loopback-only deployment of that image (config in .env)
 ```
 
 The UI never talks to Docker directly. It calls the local backend, which proxies the Engine API and adds the
@@ -201,7 +269,7 @@ session over a hijacked connection, and a file browser built on `exec`.
 
 Access to the Docker socket is root-equivalent, so the backend:
 
-- listens on `127.0.0.1` only,
+- listens on `127.0.0.1` only (in the container image it binds `0.0.0.0` inside, and Compose publishes the port on `127.0.0.1` only),
 - requires a random per-launch token on every API and WebSocket call,
 - validates the `Host` and `Origin` headers, which blocks cross-site requests and DNS-rebinding attacks from
   web pages open in your browser.
