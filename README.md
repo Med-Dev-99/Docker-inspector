@@ -234,3 +234,7 @@ docker rm -f di-demo-engine
 
 `DI_SHOT_ROUTES` is a comma- or newline-separated list of in-app routes; append `@@file:/path/to/snippet.js`
 to a route to run a JavaScript snippet in the page before the capture.
+
+## License
+
+Released under the [MIT License](LICENSE).
