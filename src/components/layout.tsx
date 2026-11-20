@@ -1,10 +1,11 @@
 // Window chrome: traffic lights, sidebar, toolbar and page scaffolding.
 import { ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
-import { Activity, Box, Database, Gauge, HardDrive, Layers, Moon, Network, Server, Settings, Sun, SunMoon, Bell, BellOff, Command, PanelLeft } from 'lucide-react';
+import { Activity, AlertOctagon, Box, Database, Gauge, HardDrive, History, Layers, Moon, Network, Server, Settings, Rocket, Stethoscope, Sun, SunMoon, Bell, BellOff, Command, PanelLeft } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { navigate, useRoute } from '../lib/router';
 import { socket } from '../lib/ws';
-import { useContainers, useImages, useMeta, useVolumes, useNetworks, project, prefs } from '../lib/docker';
+import { useContainers, useImages, useMeta, useVolumes, useNetworks, project, prefs, DesktopSettings } from '../lib/docker';
+import { useCrashes, useDoctor } from '../lib/history';
 import { MenuButton } from './menu';
 import { AppGlyph, StatusDot } from './ui';
 
@@ -27,6 +28,18 @@ function resolveTheme() {
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
 }
 darkMq.addEventListener('change', resolveTheme);
+/** Settings owned by the Electron main process (background monitoring, login item, notifications). */
+export function useDesktopSettings() {
+  const [s, setS] = useState<DesktopSettings | null>(null);
+  useEffect(() => {
+    const d = window.desktop;
+    if (!d?.getSettings) return;
+    d.getSettings().then(setS).catch(() => {});
+    return d.onSettings(setS);
+  }, []);
+  return s;
+}
+
 export function applyTheme(t: Theme) {
   themeChoice = t;
   resolveTheme();
@@ -75,6 +88,11 @@ export function Sidebar({ onPalette }: { onPalette: () => void }) {
   const { data: meta } = useMeta();
   const status = useSocketStatus();
   const p = usePrefs();
+  const ds = useDesktopSettings();
+  const { data: crashes } = useCrashes();
+  const { data: doctor } = useDoctor();
+  const unread = crashes?.unread || 0;
+  const urgent = doctor ? doctor.counts.critical + doctor.counts.high : 0;
 
   const running = containers?.filter((c) => c.State === 'running').length;
   const projects = new Map<string, { total: number; running: number }>();
@@ -106,6 +124,11 @@ export function Sidebar({ onPalette }: { onPalette: () => void }) {
         </div>
         <div className="nav-heading">Monitor</div>
         <div className="nav-group">
+          <NavItem icon={Stethoscope} label="Doctor" to="/doctor" active={section === 'doctor'} tint="green"
+            badge={doctor ? <span className={`grade-badge g-${doctor.grade}`} title={`${urgent} urgent`}>{doctor.grade}</span> : null} />
+          <NavItem icon={AlertOctagon} label="Crash reports" to="/crashes" active={section === 'crashes'} tint="red"
+            badge={unread ? <span className="badge-red">{unread}</span> : crashes?.crashes.length ?? null} />
+          <NavItem icon={History} label="Timeline" to="/timeline" active={section === 'timeline'} tint="indigo" />
           <NavItem icon={HardDrive} label="Disk Usage" to="/storage" active={section === 'storage'} tint="pink" />
           <NavItem icon={Activity} label="Activity" to="/activity" active={section === 'activity'} tint="green" />
           <NavItem icon={Server} label="Engine" to="/system" active={section === 'system'} tint="gray" />
@@ -141,7 +164,14 @@ export function Sidebar({ onPalette }: { onPalette: () => void }) {
           { label: 'Dark', icon: Moon, checked: p.theme === 'dark', onClick: () => { setPref('theme', 'dark'); applyTheme('dark'); } },
           { separator: true },
           { header: true, label: 'Notifications' },
-          { label: p.alerts === false ? 'Crash alerts off' : 'Crash alerts on', icon: p.alerts === false ? BellOff : Bell, checked: p.alerts !== false, onClick: () => setPref('alerts', p.alerts === false) },
+          { label: p.alerts === false ? 'In-app crash alerts off' : 'In-app crash alerts on', icon: p.alerts === false ? BellOff : Bell, checked: p.alerts !== false, onClick: () => setPref('alerts', p.alerts === false) },
+          ...(ds ? [
+            { label: 'Desktop notifications', icon: Bell, checked: ds.notifications, onClick: () => window.desktop!.setSettings({ notifications: !ds.notifications }) } as const,
+            { separator: true } as const,
+            { header: true, label: 'Background' } as const,
+            { label: 'Keep monitoring when closed', icon: History, checked: ds.runInBackground, onClick: () => window.desktop!.setSettings({ runInBackground: !ds.runInBackground }) } as const,
+            { label: 'Start at login', icon: Rocket, checked: ds.startAtLogin, onClick: () => window.desktop!.setSettings({ startAtLogin: !ds.startAtLogin }) } as const,
+          ] : []),
         ]}>
           <Settings size={15} strokeWidth={1.9} />
         </MenuButton>
