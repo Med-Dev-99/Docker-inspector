@@ -10,7 +10,8 @@
     "dev": "node scripts/dev.js",
     "typecheck": "tsc --noEmit",
     "install-desktop": "node scripts/install-desktop.js",
-    "icon": "env -u ELECTRON_RUN_AS_NODE electron scripts/render-icon.js"
+    "icon": "env -u ELECTRON_RUN_AS_NODE electron scripts/render-icon.js",
+    "test": "node --test --no-warnings"
   },
   "keywords": [],
   "author": "",
