@@ -3,7 +3,6 @@ import { useEffect } from 'react';
 import { QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, engine } from './api';
 import { socket } from './ws';
-import { toast } from '../components/toast';
 
 // ------------------------------------------------------------------ types
 export interface Port { IP?: string; PrivatePort: number; PublicPort?: number; Type: string }
@@ -110,7 +109,6 @@ export function useLiveUpdates() {
         inv(['container', event.actorId]);
         if (event.action === 'create' || event.action === 'destroy' || event.action === 'commit') invDf();
         if (event.action === 'destroy') inv(['images']), inv(['volumes']);
-        maybeAlert(event);
         break;
       case 'image':
         inv(['images']);
@@ -125,20 +123,6 @@ export function useLiveUpdates() {
     }
   }), [qc]);
 }
-
-function maybeAlert(ev: DockerEvent) {
-  const name = ev.attributes?.name || shortIdLocal(ev.actorId);
-  const p = prefs();
-  if (p.alerts === false) return;
-  if (ev.action === 'oom') {
-    toast({ kind: 'error', title: 'Out of memory', message: `${name} was killed by the OOM killer.` });
-    window.desktop?.notify('Container out of memory', `${name} was killed by the OOM killer.`);
-  } else if (ev.action === 'die' && ev.attributes?.exitCode && ev.attributes.exitCode !== '0' && ev.attributes.exitCode !== '143' && ev.attributes.exitCode !== '137') {
-    toast({ kind: 'warning', title: `${name} exited`, message: `Exit code ${ev.attributes.exitCode}` });
-    window.desktop?.notify(`${name} crashed`, `The container exited with code ${ev.attributes.exitCode}.`);
-  }
-}
-const shortIdLocal = (id: string) => (id || '').slice(0, 12);
 
 // ------------------------------------------------------------------ helpers
 export const cName = (c?: { Names?: string[]; Name?: string } | null) =>
@@ -249,6 +233,8 @@ export async function containerAction(id: string, action: 'start' | 'stop' | 're
   queryClient.invalidateQueries({ queryKey: ['container', id] });
 }
 
+export interface DesktopSettings { runInBackground: boolean; startAtLogin: boolean; notifications: boolean }
+
 declare global {
   interface Window {
     desktop?: {
@@ -262,6 +248,10 @@ declare global {
       onFocusChange(cb: (v: boolean) => void): () => void;
       openExternal(url: string): void;
       notify(title: string, body: string): void;
+      getSettings(): Promise<DesktopSettings>;
+      setSettings(patch: Partial<DesktopSettings>): Promise<DesktopSettings>;
+      onSettings(cb: (s: DesktopSettings) => void): () => void;
+      onNavigate(cb: (route: string) => void): () => void;
     };
   }
 }
