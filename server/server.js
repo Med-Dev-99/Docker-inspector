@@ -76,15 +76,24 @@ for f in * .[!.]* ..?*; do
   printf '%s|%s|%s|%s\\n' "$t" "$meta" "$tgt" "$f"
 done`;
 
-export async function startServer({ port = 0, token = crypto.randomBytes(24).toString('hex'), devOrigin } = {}) {
+/**
+ * @param {object}   opts
+ * @param {number}   opts.port        TCP port (0 = random free port)
+ * @param {string}   opts.host        interface to bind (default 127.0.0.1; use 0.0.0.0 inside a container)
+ * @param {string}   opts.token       shared secret required on every API/WS call (default: random per launch)
+ * @param {string}   opts.devOrigin   extra allowed origin for the Vite dev server
+ * @param {string[]} opts.extraHosts  additional `host:port` values browsers may use to reach us
+ *                                    (needed behind Docker port mappings / reverse proxies)
+ */
+export async function startServer({ port = 0, host = '127.0.0.1', token = crypto.randomBytes(24).toString('hex'), devOrigin, extraHosts = [] } = {}) {
   const version = await docker.init();
   const info = await docker.get('/info').catch(() => ({}));
   const hub = new Hub();
   await hub.start();
 
   let actualPort = port;
-  const allowedHosts = () => new Set([`127.0.0.1:${actualPort}`, `localhost:${actualPort}`, ...(devOrigin ? [new URL(devOrigin).host] : [])]);
-  const allowedOrigins = () => new Set([`http://127.0.0.1:${actualPort}`, `http://localhost:${actualPort}`, ...(devOrigin ? [devOrigin] : [])]);
+  const allowedHosts = () => new Set([`127.0.0.1:${actualPort}`, `localhost:${actualPort}`, ...extraHosts, ...(devOrigin ? [new URL(devOrigin).host] : [])]);
+  const allowedOrigins = () => new Set([`http://127.0.0.1:${actualPort}`, `http://localhost:${actualPort}`, ...extraHosts.map((h) => `http://${h}`), ...(devOrigin ? [devOrigin] : [])]);
 
   const tokenOk = (t) => typeof t === 'string' && t.length === token.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(token));
 
@@ -116,7 +125,15 @@ export async function startServer({ port = 0, token = crypto.randomBytes(24).toS
         engine: version,
       });
     }
-    if (p === '/api/host') return sendJSON(res, 200, hostInfo(info.DockerRootDir));
+    if (p === '/api/host') {
+      const h = hostInfo(info.DockerRootDir);
+      // Inside a container the hostname / OS we can read are the container's own; the engine knows the real host.
+      if (process.env.DI_CONTAINER) {
+        if (info.Name) h.hostname = info.Name;
+        if (info.OperatingSystem) h.os = info.OperatingSystem;
+      }
+      return sendJSON(res, 200, h);
+    }
     if (p === '/api/stats/history') return sendJSON(res, 200, hub.history());
     if (p === '/api/events/recent') return sendJSON(res, 200, hub.events.slice(-500));
 
@@ -279,7 +296,7 @@ export async function startServer({ port = 0, token = crypto.randomBytes(24).toS
     });
   }
 
-  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
   actualPort = server.address().port;
 
   return {
