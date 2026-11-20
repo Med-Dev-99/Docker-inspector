@@ -22,6 +22,8 @@ services:
     volumes:
       # NB: ":ro" does not make the Docker API read-only; it only protects the socket file itself.
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Recorded history, crash reports and Doctor settings survive updates and restarts.
+      - docker-inspector-data:/data
 
     # Let the unprivileged "node" user read the socket. The right GID depends on the engine (see .env.example).
     group_add:
@@ -32,6 +34,8 @@ services:
       DI_TOKEN: "${DI_TOKEN:-}"
       # The host:port values your browser uses to reach the app (Host/Origin allow-list).
       DI_ALLOWED_HOSTS: "${DI_ALLOWED_HOSTS:-localhost:${DI_PORT:-7780}}"
+      # Days of one-minute history to keep (time machine). Crash reports are kept for 90 days.
+      DI_HISTORY_DAYS: "${DI_HISTORY_DAYS:-7}"
 
     read_only: true
     tmpfs:
@@ -40,3 +44,6 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  docker-inspector-data:
