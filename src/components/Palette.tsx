@@ -1,7 +1,7 @@
 // Spotlight-style quick open (Ctrl+K).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, Database, Gauge, HardDrive, Layers, Network, Search, Activity, Server, Sparkles, CloudDownload, CornerDownLeft } from 'lucide-react';
+import { Box, Database, Gauge, HardDrive, Layers, Network, Search, Activity, Server, Sparkles, CloudDownload, CornerDownLeft, AlertOctagon, History, Stethoscope } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useContainers, useImages, useVolumes, useNetworks, cName, imageName, stateColor, isAnonymousVolume } from '../lib/docker';
 import { navigate } from '../lib/router';
@@ -28,6 +28,9 @@ export function Palette({ open, onClose, onAction }: { open: boolean; onClose: (
       { id: 'p-images', label: 'Images', icon: Layers, to: '/images', kind: 'Go to' },
       { id: 'p-volumes', label: 'Volumes', icon: Database, to: '/volumes', kind: 'Go to' },
       { id: 'p-networks', label: 'Networks', icon: Network, to: '/networks', kind: 'Go to' },
+      { id: 'p-doctor', label: 'Doctor', icon: Stethoscope, to: '/doctor', kind: 'Go to' },
+      { id: 'p-crashes', label: 'Crash reports', icon: AlertOctagon, to: '/crashes', kind: 'Go to' },
+      { id: 'p-timeline', label: 'Timeline', icon: History, to: '/timeline', kind: 'Go to' },
       { id: 'p-storage', label: 'Disk Usage', icon: HardDrive, to: '/storage', kind: 'Go to' },
       { id: 'p-activity', label: 'Activity', icon: Activity, to: '/activity', kind: 'Go to' },
       { id: 'p-system', label: 'Engine', icon: Server, to: '/system', kind: 'Go to' },
