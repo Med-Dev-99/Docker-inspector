@@ -1,0 +1,42 @@
+{
+  "name": "docker-inspector",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "build": "vite build",
+    "start": "vite build && env -u ELECTRON_RUN_AS_NODE electron .",
+    "app": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "web": "vite build && node server/standalone.js",
+    "dev": "node scripts/dev.js",
+    "typecheck": "tsc --noEmit",
+    "install-desktop": "node scripts/install-desktop.js",
+    "icon": "env -u ELECTRON_RUN_AS_NODE electron scripts/render-icon.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "A beautiful desktop app to inspect, monitor and manage Docker on Linux",
+  "productName": "Docker Inspector",
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@tanstack/react-query": "^5.108.2",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "electron": "^45.4.1",
+    "lucide-react": "^1.77.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  },
+  "desktopName": "docker-inspector.desktop"
+}
