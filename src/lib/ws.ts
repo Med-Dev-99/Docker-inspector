@@ -41,7 +41,7 @@ class Socket {
       let msg: any;
       try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.sid) { this.sessions.get(msg.sid)?.(msg); return; }
-      const topic = msg.type === 'stats' ? 'stats' : msg.type === 'event' ? 'events' : null;
+      const topic = msg.type === 'stats' ? 'stats' : msg.type === 'event' ? 'events' : msg.type === 'crash' ? 'crashes' : null;
       if (topic) for (const l of this.topics.get(topic) || []) l(msg);
     };
     ws.onclose = () => {
@@ -58,7 +58,7 @@ class Socket {
     else this.queue.push(s);
   }
 
-  subscribe(topic: 'stats' | 'events', fn: Listener) {
+  subscribe(topic: 'stats' | 'events' | 'crashes', fn: Listener) {
     this.start();
     let set = this.topics.get(topic);
     if (!set) {
