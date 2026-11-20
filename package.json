@@ -14,7 +14,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "description": "A beautiful desktop app to inspect, monitor and manage Docker on Linux",
   "productName": "Docker Inspector",
   "type": "module",
