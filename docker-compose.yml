@@ -1,0 +1,42 @@
+# Docker Inspector in a container.
+#
+#   cp .env.example .env     # then edit: set DI_TOKEN and DOCKER_GID
+#   docker compose up -d --build
+#   open http://localhost:7780/?t=<your DI_TOKEN>
+#
+# SECURITY: mounting the Docker socket gives this container root-equivalent control of the host.
+# Hence: the port is published on 127.0.0.1 only, every request needs the token, and the
+# container runs unprivileged, read-only, with all capabilities dropped.
+
+services:
+  docker-inspector:
+    build: .
+    image: docker-inspector:latest
+    container_name: docker-inspector
+    restart: unless-stopped
+
+    ports:
+      # Loopback only. Do NOT change to 0.0.0.0 unless you put authentication/TLS in front of it.
+      - "127.0.0.1:${DI_PORT:-7780}:7780"
+
+    volumes:
+      # NB: ":ro" does not make the Docker API read-only; it only protects the socket file itself.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    # Let the unprivileged "node" user read the socket. The right GID depends on the engine (see .env.example).
+    group_add:
+      - "${DOCKER_GID:-999}"
+
+    environment:
+      # Access token (>= 16 chars). Leave empty to get a random one printed in `docker compose logs`.
+      DI_TOKEN: "${DI_TOKEN:-}"
+      # The host:port values your browser uses to reach the app (Host/Origin allow-list).
+      DI_ALLOWED_HOSTS: "${DI_ALLOWED_HOSTS:-localhost:${DI_PORT:-7780}}"
+
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
