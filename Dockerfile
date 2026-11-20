@@ -37,12 +37,18 @@ ENV NODE_ENV=production \
     DI_HOST=0.0.0.0 \
     DI_PORT=7780 \
     DI_NO_OPEN=1 \
-    DI_CONTAINER=1
+    DI_CONTAINER=1 \
+    DI_DATA_DIR=/data
 
 COPY --from=deps  /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY server ./server
+
+# History (time machine, crash reports, Doctor settings) is stored in a SQLite file under /data.
+# Mount a volume there to keep it across container re-creations.
+RUN mkdir -p /data && chown node:node /data
+VOLUME /data
 
 # Run unprivileged. To reach /var/run/docker.sock the process must be in the socket's group:
 # docker-compose.yml does this with `group_add: [<docker gid>]`.
