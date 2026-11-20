@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Box, Database, Layers, Network, Sparkles, TriangleAlert, ArrowRight, HardDrive, Cpu, MemoryStick } from 'lucide-react';
+import { Box, Database, Layers, Network, Sparkles, TriangleAlert, ArrowRight, HardDrive, Cpu, MemoryStick, AlertOctagon, Stethoscope } from 'lucide-react';
 import { Page } from '../components/layout';
 import { AreaChart, Ring, StackedBar } from '../components/charts';
 import { Button, Empty, Meter, StatusDot, Spinner } from '../components/ui';
@@ -8,6 +8,7 @@ import { useAllLatest, useHostHistory } from '../lib/stats';
 import { navigate } from '../lib/router';
 import { bytes, mem, pct, duration } from '../lib/format';
 import { PruneSheet } from './sheets/Prune';
+import { useCrashes, useDoctor } from '../lib/history';
 import { EventRow } from './Activity';
 
 function greeting() {
@@ -27,6 +28,9 @@ export function DashboardView() {
   const latest = useAllLatest();
   const hostHist = useHostHistory();
   const [pruneOpen, setPruneOpen] = useState(false);
+  const { data: crashData } = useCrashes();
+  const { data: doctor } = useDoctor();
+  const freshCrashes = (crashData?.crashes || []).filter((c) => !c.acked && Date.now() - c.lastT < 7 * 86400_000);
 
   const s = dfSummary(df);
   const counts = useMemo(() => {
@@ -54,6 +58,17 @@ export function DashboardView() {
   return (
     <Page title="Overview" subtitle={host ? `${greeting()} · ${host.hostname}` : undefined}>
       <div className="scroll pad dashboard">
+        {freshCrashes.length > 0 && (
+          <div className="banner banner-danger">
+            <AlertOctagon size={18} />
+            <div className="banner-text">
+              <b>{freshCrashes.length === 1 ? `${freshCrashes[0].name} crashed` : `${freshCrashes.length} containers crashed`}</b>
+              {' — '}{freshCrashes[0].title}{freshCrashes.length > 1 ? `, and ${freshCrashes.length - 1} more` : ''}.
+            </div>
+            <Button variant="primary" onClick={() => navigate(freshCrashes.length === 1 ? `/crashes/${freshCrashes[0].id}` : '/crashes')}>See why</Button>
+          </div>
+        )}
+
         {host?.disk && diskPct > 90 && (
           <div className="banner banner-warn">
             <TriangleAlert size={18} />
@@ -173,6 +188,27 @@ export function DashboardView() {
                     </a>
                   ))}
                 </div>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-head"><div className="card-title"><Stethoscope size={14} /> Doctor</div><a className="link small" onClick={() => navigate('/doctor')}>Open</a></div>
+            {!doctor ? <div className="loading"><Spinner /> Checking…</div> : (
+              <div className="doctor-mini">
+                <div className="doctor-mini-top">
+                  <div className={`grade-big g-${doctor.grade}`}>{doctor.grade}</div>
+                  <div>
+                    <div className="doctor-mini-title">{doctor.score}/100</div>
+                    <div className="muted small">{doctor.counts.critical + doctor.counts.high} urgent · {doctor.counts.medium + doctor.counts.low} to improve</div>
+                  </div>
+                </div>
+                {doctor.findings.filter((f) => !f.ignored && f.severity !== 'info').slice(0, 4).map((f) => (
+                  <a key={f.key} className="mini-finding" onClick={() => navigate('/doctor')}>
+                    <span className={`sev-dot sd-${f.severity}`} /><span className="truncate">{f.target ? `${f.target.name}: ` : ''}{f.title}</span><ArrowRight size={12} />
+                  </a>
+                ))}
+                {doctor.findings.filter((f) => !f.ignored && f.severity !== 'info').length === 0 && <div className="muted small">No problems found.</div>}
               </div>
             )}
           </div>
