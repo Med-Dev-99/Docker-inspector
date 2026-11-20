@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HardDrive, Sparkles, Layers, Box, Database, Hammer, RotateCw, TriangleAlert } from 'lucide-react';
 import { Page } from '../components/layout';
 import { Donut } from '../components/charts';
 import { Button, Capsule, IconButton, Loading, Meter, Pill } from '../components/ui';
 import { useDf, useHost, dfSummary, imageName, cName, isAnonymousVolume } from '../lib/docker';
-import { navigate } from '../lib/router';
+import { navigate, useRoute } from '../lib/router';
 import { bytes, pct, ago } from '../lib/format';
 import { PruneSheet } from './sheets/Prune';
 
@@ -32,6 +32,9 @@ export function StorageView() {
   const { data: df, isLoading, refetch, isFetching } = useDf();
   const { data: host } = useHost();
   const [pruneOpen, setPruneOpen] = useState(false);
+  const route = useRoute();
+  // Deep link from Doctor: /storage?cleanup=1 opens the Clean Up sheet.
+  useEffect(() => { if (route.query.get('cleanup') === '1') { setPruneOpen(true); navigate('/storage', true); } }, [route.raw]);
   const s = dfSummary(df);
   const diskPct = host?.disk ? ((host.disk.total - host.disk.free) / host.disk.total) * 100 : 0;
 
