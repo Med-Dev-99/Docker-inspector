@@ -219,3 +219,40 @@ export function hijackExec(execId, { tty = true } = {}) {
 }
 
 export function getApiPrefix() { return apiPrefix; }
+
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r/g;
+
+/**
+ * Fetch (not follow) the last log lines of a container.
+ * Returns [{ stream: 'stdout' | 'stderr', ts, text }] oldest first, with ANSI codes stripped.
+ */
+export async function fetchLogs(id, { tail = 200, tty = false } = {}) {
+  const res = await rawRequest('GET', `/containers/${id}/logs?stdout=1&stderr=1&timestamps=1&tail=${tail}`, { timeout: 15000 });
+  if (res.statusCode >= 400) { await readBody(res); return []; }
+  const lines = [];
+  const partial = { stdout: '', stderr: '' };
+  const dec = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') };
+  const push = (stream, raw) => {
+    const m = raw.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z) /);
+    const text = (m ? raw.slice(m[0].length) : raw).replace(ANSI, '').slice(0, 2000);
+    lines.push({ stream, ts: m ? m[1] : null, text });
+  };
+  const onData = (stream, buf) => {
+    partial[stream] += dec[stream].write(buf);
+    let i;
+    while ((i = partial[stream].indexOf('\n')) >= 0) {
+      push(stream, partial[stream].slice(0, i));
+      partial[stream] = partial[stream].slice(i + 1);
+    }
+  };
+  await new Promise((resolve) => {
+    const demux = tty ? null : new Demuxer(onData);
+    res.on('data', (c) => (demux ? demux.push(c) : onData('stdout', c)));
+    res.on('end', resolve);
+    res.on('error', resolve);
+    res.on('close', resolve);
+  });
+  for (const s of ['stdout', 'stderr']) if (partial[s]) push(s, partial[s]);
+  return lines;
+}
