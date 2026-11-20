@@ -22,8 +22,16 @@ const listeners = new Set<() => void>();
 let started = false;
 
 function bump() {
+  // Keep collecting while the window is hidden (tray mode) but don't re-render anything.
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { pendingWhileHidden = true; return; }
   version++;
   for (const l of listeners) l();
+}
+let pendingWhileHidden = false;
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && pendingWhileHidden) { pendingWhileHidden = false; bump(); }
+  });
 }
 
 function push<T extends { t: number }>(arr: T[], s: T) {
