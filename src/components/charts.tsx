@@ -212,3 +212,159 @@ export function StackedBar({ segments, height = 10 }: { segments: { value: numbe
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------------------------
+// History chart: absolute time axis (stored data), gaps where nothing was recorded, event markers
+// and click-to-select a moment.
+// ---------------------------------------------------------------------------------------------
+export interface HistorySeries { name: string; color: string; values: (number | null | undefined)[]; fill?: boolean; dashed?: boolean }
+export interface ChartMarker { t: number; color: string; label: string; onClick?: () => void }
+
+function fmtAxis(t: number, span: number) {
+  const d = new Date(t);
+  const hm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (span > 36 * 3600_000) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${hm}`;
+  return hm;
+}
+
+export function HistoryChart({ from, to, times, series, step, height = 150, format, max, minMax = 0, markers = [], selected, onSelect, legend = true }: {
+  from: number; to: number; times: number[]; series: HistorySeries[]; step: number; height?: number; format: (v: number) => string;
+  max?: number; minMax?: number; markers?: ChartMarker[]; selected?: number | null; onSelect?: (t: number) => void; legend?: boolean;
+}) {
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const uid = useId().replace(/:/g, '');
+  const [hover, setHover] = useState<number | null>(null);
+  const padR = 52, padT = 10, padB = 18;
+  const w = Math.max(0, width - padR);
+  const h = height - padT - padB;
+  const span = Math.max(1, to - from);
+  const gap = step * 2.5;
+
+  let dataMax = 0;
+  for (const s of series) for (const v of s.values) if (typeof v === 'number' && v > dataMax) dataMax = v;
+  const yMax = max ?? niceMax(Math.max(minMax, dataMax * 1.1));
+  const x = (t: number) => ((t - from) / span) * w;
+  const y = (v: number) => padT + h - (Math.min(v, yMax) / yMax) * h;
+
+  // Split every series into continuous segments (break on missing data or recording gaps).
+  const paths = series.map((s) => {
+    const segs: { line: string; area: string }[] = [];
+    let cur: number[] = [];
+    const close = () => {
+      if (cur.length) {
+        let line = '';
+        cur.forEach((i, k) => { line += `${k ? 'L' : 'M'}${x(times[i]).toFixed(1)},${y(s.values[i] as number).toFixed(1)}`; });
+        const a = cur[0], b = cur[cur.length - 1];
+        segs.push({ line, area: `${line}L${x(times[b]).toFixed(1)},${padT + h}L${x(times[a]).toFixed(1)},${padT + h}Z` });
+      }
+      cur = [];
+    };
+    times.forEach((t, i) => {
+      const v = s.values[i];
+      if (typeof v !== 'number') { close(); return; }
+      if (cur.length && t - times[cur[cur.length - 1]] > gap) close();
+      cur.push(i);
+    });
+    close();
+    return segs;
+  });
+
+  // "Not recording" shading: before the first point, between distant points, after the last point.
+  const gaps: [number, number][] = [];
+  if (times.length) {
+    if (times[0] - from > gap) gaps.push([from, times[0]]);
+    for (let i = 1; i < times.length; i++) if (times[i] - times[i - 1] > gap) gaps.push([times[i - 1], times[i]]);
+    if (to - times[times.length - 1] > Math.max(gap, 90_000)) gaps.push([times[times.length - 1], to]);
+  } else gaps.push([from, to]);
+
+  const ticks = [0, 0.5, 1].map((f) => yMax * f);
+  const timeTicks = [0, 1, 2, 3, 4, 5].map((k) => from + (span / 5) * k);
+
+  const timeAt = (e: React.MouseEvent) => {
+    const r = (e.currentTarget as SVGElement).getBoundingClientRect();
+    return from + ((e.clientX - r.left) / w) * span;
+  };
+  const nearest = (t: number) => {
+    let best = -1;
+    for (let i = 0; i < times.length; i++) if (best < 0 || Math.abs(times[i] - t) < Math.abs(times[best] - t)) best = i;
+    return best >= 0 && Math.abs(times[best] - t) <= Math.max(gap, step * 4) ? best : null;
+  };
+  const hv = hover !== null && hover < times.length ? hover : null;
+  const tipLeft = hv !== null ? x(times[hv]) : 0;
+  const last = (s: HistorySeries) => { for (let i = s.values.length - 1; i >= 0; i--) if (typeof s.values[i] === 'number') return s.values[i] as number; return 0; };
+
+  return (
+    <div className="chart" ref={ref}>
+      {legend && (
+        <div className="chart-legend">
+          {series.map((s) => (
+            <span key={s.name} className="legend-item">
+              <span className="legend-swatch" style={{ background: s.color }} />
+              {s.name}
+              <b>{format(hv !== null && typeof s.values[hv] === 'number' ? (s.values[hv] as number) : last(s))}</b>
+            </span>
+          ))}
+        </div>
+      )}
+      {width > 0 && (
+        <svg width={width} height={height} className={`chart-svg${onSelect ? ' selectable' : ''}`}
+          onMouseMove={(e) => setHover(nearest(timeAt(e)))} onMouseLeave={() => setHover(null)}
+          onClick={(e) => { if (onSelect) onSelect(Math.round(timeAt(e))); }}>
+          <defs>
+            {series.map((s, i) => (
+              <linearGradient key={i} id={`h${uid}${i}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={s.color} stopOpacity={0.28} />
+                <stop offset="100%" stopColor={s.color} stopOpacity={0.02} />
+              </linearGradient>
+            ))}
+            <pattern id={`p${uid}`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="6" className="gap-stripe" />
+            </pattern>
+            <clipPath id={`k${uid}`}><rect x={0} y={0} width={w} height={height} /></clipPath>
+          </defs>
+          {ticks.map((v, i) => (
+            <g key={i}>
+              <line x1={0} x2={w} y1={y(v)} y2={y(v)} className={i === 0 ? 'grid base' : 'grid'} />
+              <text x={w + 8} y={y(v) + 4} className="axis">{format(v)}</text>
+            </g>
+          ))}
+          {timeTicks.map((t, i) => (
+            <text key={i} x={x(t)} y={height - 3} className="axis" textAnchor={i === 0 ? 'start' : i === 5 ? 'end' : 'middle'}>{fmtAxis(t, span)}</text>
+          ))}
+          <g clipPath={`url(#k${uid})`}>
+            {gaps.map(([a, b], i) => <rect key={i} x={x(a)} y={padT} width={Math.max(0, x(b) - x(a))} height={h} fill={`url(#p${uid})`} className="gap-rect"><title>Not recording</title></rect>)}
+            {series.map((s, i) => s.fill !== false && paths[i].map((sg, k) => <path key={`a${i}-${k}`} d={sg.area} fill={`url(#h${uid}${i})`} />))}
+            {series.map((s, i) => paths[i].map((sg, k) => (
+              <path key={`l${i}-${k}`} d={sg.line} fill="none" stroke={s.color} strokeWidth={1.5} strokeLinejoin="round" strokeDasharray={s.dashed ? '4 3' : undefined} />
+            )))}
+          </g>
+          {markers.filter((m) => m.t >= from && m.t <= to).map((m, i) => (
+            <g key={i} className="chart-marker" onClick={(e) => { if (m.onClick) { e.stopPropagation(); m.onClick(); } }} style={{ cursor: m.onClick ? 'pointer' : undefined }}>
+              <line x1={x(m.t)} x2={x(m.t)} y1={padT} y2={padT + h} stroke={m.color} strokeWidth={1} strokeDasharray="3 3" opacity={0.7} />
+              <circle cx={x(m.t)} cy={padT + 3} r={4.5} fill={m.color} stroke="var(--card)" strokeWidth={1.5} />
+              <title>{m.label}</title>
+            </g>
+          ))}
+          {typeof selected === 'number' && selected >= from && selected <= to && (
+            <g><line x1={x(selected)} x2={x(selected)} y1={padT} y2={padT + h} className="selected-line" /><circle cx={x(selected)} cy={padT + h} r={4} className="selected-dot" /></g>
+          )}
+          {hv !== null && (
+            <g pointerEvents="none">
+              <line x1={tipLeft} x2={tipLeft} y1={padT} y2={padT + h} className="crosshair" />
+              {series.map((s, i) => typeof s.values[hv] === 'number' && <circle key={i} cx={tipLeft} cy={y(s.values[hv] as number)} r={3.5} fill={s.color} className="hover-dot" />)}
+            </g>
+          )}
+        </svg>
+      )}
+      {hv !== null && (
+        <div className="chart-tip" style={{ left: Math.min(Math.max(tipLeft, 70), Math.max(70, width - 130)), top: 26 }}>
+          <div className="chart-tip-time">{new Date(times[hv]).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: step < 60_000 ? '2-digit' : undefined })}</div>
+          {series.map((s) => typeof s.values[hv] === 'number' && (
+            <div key={s.name} className="chart-tip-row"><span className="legend-swatch" style={{ background: s.color }} />{s.name}<b>{format(s.values[hv] as number)}</b></div>
+          ))}
+          {onSelect && <div className="chart-tip-hint">Click to inspect this moment</div>}
+        </div>
+      )}
+    </div>
+  );
+}
