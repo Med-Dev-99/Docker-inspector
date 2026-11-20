@@ -1,0 +1,17 @@
+# Keep the build context small and reproducible: only what the Dockerfile COPYs is needed.
+.git
+.gitignore
+.dockerignore
+.env
+.env.*
+!.env.example
+node_modules
+dist
+build
+docs
+electron
+scripts
+*.md
+LICENSE
+Dockerfile
+docker-compose.yml
